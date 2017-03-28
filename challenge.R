@@ -5,11 +5,11 @@ library(reshape2)
 library(EMCluster)
 library(expm)
 library(mclust)
-tx = data.table(read.csv("c:/users/paul/consensys/txs_sample.csv",header = T,as.is = T,
+tx = data.table(read.csv("consensys/txs_sample.csv",header = T,as.is = T,
                          colClasses = c("integer","numeric","numeric","numeric",
                                         "numeric","character","character","integer","character")))
 
-blocks = data.table(read.csv("c:/users/paul/Downloads/blocks_sample.csv",header = T,as.is = T,
+blocks = data.table(read.csv("consensys/blocks_sample.csv",header = T,as.is = T,
                              colClasses = c("numeric","numeric","integer","character",
                                             "character","character","integer")))
 badAddresses=c("0x6a0a0fc761c612c340a0e98d33b37a75e5268472",
@@ -54,25 +54,25 @@ sum(aggData$right%in%aggData$left) #=~6000
 aggData$hasTwin = ifelse(aggData$left%in%aggData$right,1,0)
 aggData2=aggData[,list("N"=sum(N),"value"=sum(value),"flag"=max(flag),"hasTwin"=max(hasTwin)),by = c("address1","address2")]
 
-twinData = aggData[hasTwin ==1,]
+twinData = aggData2[hasTwin ==1,]
 twinAddresses = unique(union(twinData$from,twinData$to))
 
-setnames(aggData2,c("from","to","N","value","flag"))
-symMat=rbind(aggData,aggData2)
-combMat = symMat[,list("N"=sum(N),"value"=sum(value))]
+#setnames(aggData2,c("from","to","N","value","flag"))
+#symMat=rbind(aggData,aggData2)
+#combMat = symMat[,list("N"=sum(N),"value"=sum(value))]
 #aggData=aggData[to%in%addressesTo,]
-aggData=tx[from%in%addressesTo,list("N"=.N,"value"=sum(value),"flag"=ifelse(.N>0,1,0)),by = c("to","from")]
+#aggData=tx[from%in%addressesTo,list("N"=.N,"value"=sum(value),"flag"=ifelse(.N>0,1,0)),by = c("to","from")]
 
-sm =sparseMatrix(i=c(match(aggData$from,addresses),seq(length(unique(aggData$to))+1,length(addresses))),
-                 j=c(match(aggData$to,addresses),seq(length(unique(aggData$to))+1,length(addresses))),
-                 x=c(aggData$flag,rep(0,length(addresses)-length(unique(aggData$to)))),
-                 symmetric = T)
 
-tm =sparseMatrix(i=c(match(twinData$from,addresses),seq(length(unique(twinData$to))+1,length(addresses))),
-                 j=c(match(twinData$to,addresses),seq(length(unique(twinData$to))+1,length(addresses))),
-                 x=c(twinData$flag,rep(0,length(addresses)-length(unique(twinData$to)))),
+
+sm =sparseMatrix(i=match(aggData2$address1,addresses),
+                 j=match(aggData2$address2,addresses),
+                 x=aggData2$flag,
                  giveCsparse = T)
-
+tm =sparseMatrix(i=match(twinData$address1,addresses),
+                 j=match(twinData$address2,addresses),
+                 x=twinData$flag,
+                 giveCsparse = T)
 degTwins = colSums(tm)
 mean(degTwins[degTwins!=0])
 ex=which(aggData$from == "0x9ad57c8a76ac8528dc6ecdda801865a317e36758"
