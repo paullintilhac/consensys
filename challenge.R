@@ -5,6 +5,8 @@ library(reshape2)
 library(EMCluster)
 library(expm)
 library(mclust)
+library(rARPACK)
+library(spam)
 tx = data.table(read.csv("consensys/txs_sample.csv",header = T,as.is = T,
                          colClasses = c("integer","numeric","numeric","numeric",
                                         "numeric","character","character","integer","character")))
@@ -54,25 +56,28 @@ sum(aggData$right%in%aggData$left) #=~6000
 aggData$hasTwin = ifelse(aggData$left%in%aggData$right,1,0)
 aggData2=aggData[,list("N"=sum(N),"value"=sum(value),"flag"=max(flag),"hasTwin"=max(hasTwin)),by = c("address1","address2")]
 
+
+indI=match(aggData2$address1,addresses)
+indJ=match(aggData2$address2,addresses)
+comb1 = c(indI,indJ)
+comb2= c(indJ,indI)
+comb = data.table(cbind(comb1,comb2))
+newInd = which(!duplicated(comb))
+comb = comb[newInd,]
 twinData = aggData2[hasTwin ==1,]
 twinAddresses = unique(union(twinData$from,twinData$to))
 
-#setnames(aggData2,c("from","to","N","value","flag"))
-#symMat=rbind(aggData,aggData2)
-#combMat = symMat[,list("N"=sum(N),"value"=sum(value))]
-#aggData=aggData[to%in%addressesTo,]
-#aggData=tx[from%in%addressesTo,list("N"=.N,"value"=sum(value),"flag"=ifelse(.N>0,1,0)),by = c("to","from")]
+comb=comb[comb1<=comb2,]
 
+sm =sparseMatrix(i=comb$comb1,
+                 j=comb$comb2,
+                 x=rep(1,nrow(comb)),
+                 symmetric = T)
 
-
-sm =sparseMatrix(i=match(aggData2$address1,addresses),
-                 j=match(aggData2$address2,addresses),
-                 x=aggData2$flag,
-                 giveCsparse = T)
 tm =sparseMatrix(i=match(twinData$address1,addresses),
                  j=match(twinData$address2,addresses),
                  x=twinData$flag,
-                 giveCsparse = T)
+                 giveCsparse =T)
 degTwins = colSums(tm)
 mean(degTwins[degTwins!=0])
 ex=which(aggData$from == "0x9ad57c8a76ac8528dc6ecdda801865a317e36758"
@@ -81,28 +86,28 @@ ex=which(aggData$from == "0x9ad57c8a76ac8528dc6ecdda801865a317e36758"
 degree = colSums(sm)
 mean(degree[degree!=0])
 
-degree  = c(degree,rep(0,length(addresses)-length(degree)))
+
 degreeMat =sparseMatrix(j=seq(1,length(addresses)),
                         i=seq(1,length(addresses)),
                         x=degree,
                         giveCsparse = T)
-laplacian = degreeMat - sm
-laplacian = forceSymmetric(laplacian)
+
+L = degreeMat-sm
+
 k=.01
-##Second Order Taylor approximation of the matrix exponential
 identity = sparseMatrix(i=seq(1,length(addresses)),j=seq(1,length(addresses)),x = rep(1,length(addresses)))
-expL =identity -k*laplacian+.5*(k^2)*laplacian%*%laplacian
-badInd = match(badAddresses,  addresses)
 
 startVec = as.matrix(rep(0,length(addresses)))
+badInd = match(badAddresses,  addresses)
+
 startVec[badInd,]=1
-nextVec =as.matrix(expL%*%startVec)
 
-nextVec[maybeBadInd]
+## third order Taylor expansion of matrix exponential exp(-kL)
 
-#e=eigs(laplacian,3)
+nextVec =identity%*%startVec -k*L%*%startVec+.5*(k^2)*L%*%(L%*%startVec)
+nextVec = startVec-k*L%*%startVec
 
-#write.csv(addresses,"~/consensys/uniqueAddresses.csv")
-listVec = rep(list(),length(addresses))
+badFlag = nextVec>=.001
 
-weightVec = rep(0,length(addresses))
+ev <- eigs(laplacian,4)
+
