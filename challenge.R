@@ -1,81 +1,108 @@
 library(data.table)
 library(Matrix)
-
+library(lattice)
+library(reshape2)
+library(EMCluster)
+library(expm)
+library(mclust)
 tx = data.table(read.csv("c:/users/paul/consensys/txs_sample.csv",header = T,as.is = T,
-    colClasses = c("integer","numeric","numeric","numeric",
-                   "numeric","character","character","integer","character")))
+                         colClasses = c("integer","numeric","numeric","numeric",
+                                        "numeric","character","character","integer","character")))
 
-blocks = data.table(read.csv("c:/users/paul/consensys/txs_sample.csv",header = T,as.is = T,
-    colClasses = c("numeric","numeric","integer","character",
-                   "character","character","integer")))
-
-
-
+blocks = data.table(read.csv("c:/users/paul/Downloads/blocks_sample.csv",header = T,as.is = T,
+                             colClasses = c("numeric","numeric","integer","character",
+                                            "character","character","integer")))
+badAddresses=c("0x6a0a0fc761c612c340a0e98d33b37a75e5268472",
+               "0x7c20218efc2e07c8fe2532ff860d4a5d8287cb31",
+               "0xbd37ee00e47c0fe0def80bd95c498698b4a15235",
+               "0xb6389d6575966f946e190b9d538c3259857ed2c7")
+blocks = blocks[!duplicated(blocks),]
+dat =merge(tx,blocks,by = "block.number",suffixes=c(".tx",".block"))
+dat$bad = ifelse(tx$to%in%badAddresses,1,0)
+badTX = dat[bad==1,]
 ## 
-c3From = tx[from=="0xb284e6a25d0972f9a92fec45d2075067db2d49b0",] #empty
-c3To = tx[to=="0xb284e6a25d0972f9a92fec45d2075067db2d49b0",]
 
-suicideFrom = tx[from == "0x6a0a0fc761c612c340a0e98d33b37a75e5268472",] #empty
-suicideTo = tx[to == "0x6a0a0fc761c612c340a0e98d33b37a75e5268472",]
 
-createFrom = tx[from=="0x7c20218efc2e07c8fe2532ff860d4a5d8287cb31",]#empty
-createTo = tx[to=="0x7c20218efc2e07c8fe2532ff860d4a5d8287cb31",]
-
-c4From = tx[from=="0xbd37ee00e47c0fe0def80bd95c498698b4a15235",]#empty
-c4To = tx[to == "0xbd37ee00e47c0fe0def80bd95c498698b4a15235",]
-
-c5From = tx[from == "0xb6389d6575966f946e190b9d538c3259857ed2c7",]#empty
-c5To = tx[to == "0xb6389d6575966f946e190b9d538c3259857ed2c7",]
-
-cANDs = intersect(createTo$from,suicideTo$from) #especially bad?
+# mean(tx$gas) #125032.6
+# mean(badTX$gas) # 173268
+# mean(tx$gas.price) #27243941280
+# mean(badTX$gas.price) #51532042413
+# mean(tx$gas.used) #38539.59
+# mean(badTX$gas.used)# 149609.9
+# badBlockNums = unique(badTX$block.number)
+# badBlocks = blocks[block.number %in%badBlockNums,]
+# mean(blocks$gas.used) #282889.8
+# mean(badBlocks$gas.used) #1217368
+mean(badTX$value)
+mean(tx$value)
+mean(dat$gas.used.block)
+mean(badTX$gas.used.block)
+########Question 2
+#thing = melt(dat, id.vars = c("bad"),measure.vars = c("gas","gas.price","gas.used.tx","value","gas.used.block"))
+#test= thing
+#test[,bad:=NULL]
+#boxplot(value~variable,test)
 
 addresses = unique(union(unique(tx$to),unique(tx$from)))
 addressesTo = unique(tx$to)
 
-aggData=tx[,list("N"=.N,"value"=sum(value),"flag"=ifelse(.N>0,1,0)),by = c("to","from")]
+aggData=tx[,list("N"=.N,"value"=sum(value),"flag"=ifelse(.N>0,1,0),"address1"=max(to,from),"address2"=min(to,from)),by = c("to","from")]
+
+aggData$left = paste0(aggData$from,aggData$to)
+aggData$right = paste0(aggData$to,aggData$from)
+sum(aggData$right%in%aggData$left) #=~6000
+aggData$hasTwin = ifelse(aggData$left%in%aggData$right,1,0)
+aggData2=aggData[,list("N"=sum(N),"value"=sum(value),"flag"=max(flag),"hasTwin"=max(hasTwin)),by = c("address1","address2")]
+
+twinData = aggData[hasTwin ==1,]
+twinAddresses = unique(union(twinData$from,twinData$to))
+
+setnames(aggData2,c("from","to","N","value","flag"))
+symMat=rbind(aggData,aggData2)
+combMat = symMat[,list("N"=sum(N),"value"=sum(value))]
 #aggData=aggData[to%in%addressesTo,]
+aggData=tx[from%in%addressesTo,list("N"=.N,"value"=sum(value),"flag"=ifelse(.N>0,1,0)),by = c("to","from")]
 
 sm =sparseMatrix(i=c(match(aggData$from,addresses),seq(length(unique(aggData$to))+1,length(addresses))),
-                        j=c(match(aggData$to,addresses),seq(length(unique(aggData$to))+1,length(addresses))),
-                        x=c(aggData$flag,rep(0,length(addresses)-length(unique(aggData$to)))),
-                        giveCsparse = F)
+                 j=c(match(aggData$to,addresses),seq(length(unique(aggData$to))+1,length(addresses))),
+                 x=c(aggData$flag,rep(0,length(addresses)-length(unique(aggData$to)))),
+                 symmetric = T)
 
+tm =sparseMatrix(i=c(match(twinData$from,addresses),seq(length(unique(twinData$to))+1,length(addresses))),
+                 j=c(match(twinData$to,addresses),seq(length(unique(twinData$to))+1,length(addresses))),
+                 x=c(twinData$flag,rep(0,length(addresses)-length(unique(twinData$to)))),
+                 giveCsparse = T)
+
+degTwins = colSums(tm)
+mean(degTwins[degTwins!=0])
 ex=which(aggData$from == "0x9ad57c8a76ac8528dc6ecdda801865a317e36758"
          &aggData$to=="0x6a0a0fc761c612c340a0e98d33b37a75e5268472")
 
 degree = colSums(sm)
+mean(degree[degree!=0])
+
 degree  = c(degree,rep(0,length(addresses)-length(degree)))
 degreeMat =sparseMatrix(j=seq(1,length(addresses)),
-                 i=seq(1,length(addresses)),
-                 x=degree,
-                 giveCsparse = F)
+                        i=seq(1,length(addresses)),
+                        x=degree,
+                        giveCsparse = T)
 laplacian = degreeMat - sm
+laplacian = forceSymmetric(laplacian)
 k=.01
-
-badInd = match(
-                c("0x6a0a0fc761c612c340a0e98d33b37a75e5268472",
-                 "0x7c20218efc2e07c8fe2532ff860d4a5d8287cb31"),
-              addresses)
-
-maybeBadAddresses = unique(createTo$from)
-
-maybeBadInd = match(
-  maybeBadAddresses,
-addresses)
+##Second Order Taylor approximation of the matrix exponential
+identity = sparseMatrix(i=seq(1,length(addresses)),j=seq(1,length(addresses)),x = rep(1,length(addresses)))
+expL =identity -k*laplacian+.5*(k^2)*laplacian%*%laplacian
+badInd = match(badAddresses,  addresses)
 
 startVec = as.matrix(rep(0,length(addresses)))
 startVec[badInd,]=1
-delSM = 
-nextVec =startVec -as.matrix(k*laplacian%*%startVec)
-nextVec=nextVec-as.matrix(k*laplacian%*%nextVec)
+nextVec =as.matrix(expL%*%startVec)
+
 nextVec[maybeBadInd]
+
+#e=eigs(laplacian,3)
 
 #write.csv(addresses,"~/consensys/uniqueAddresses.csv")
 listVec = rep(list(),length(addresses))
 
 weightVec = rep(0,length(addresses))
-
-weightVec[which(addresses == "0x6a0a0fc761c612c340a0e98d33b37a75e5268472")]=1
-weightVec[which(addresses == "0x7c20218efc2e07c8fe2532ff860d4a5d8287cb31")]=1
-
-
