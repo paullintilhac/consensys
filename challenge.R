@@ -9,6 +9,7 @@ library(rARPACK)
 library(spam)
 library(mclust)
 library(pmclust)
+library(foreach)
 tx = data.table(read.csv("consensys/txs_sample.csv",header = T,as.is = T,
                          colClasses = c("integer","numeric","numeric","numeric",
                                         "numeric","character","character","integer","character")))
