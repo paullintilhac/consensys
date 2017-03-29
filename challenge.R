@@ -1,3 +1,4 @@
+
 library(data.table)
 library(Matrix)
 library(lattice)
@@ -10,6 +11,7 @@ library(spam)
 library(mclust)
 library(pmclust)
 library(foreach)
+library(doMC)
 tx = data.table(read.csv("consensys/txs_sample.csv",header = T,as.is = T,
                          colClasses = c("integer","numeric","numeric","numeric",
                                         "numeric","character","character","integer","character")))
@@ -129,20 +131,54 @@ GMM$gas.price = log(GMM$gas.price)
 GMM$gas.price[GMM$gas.price==-Inf]=-10
 GMM$gas.used.tx=log(GMM$gas.used.tx)
 GMM$gas.used.block=log(GMM$gas.used.block )
+save(GMM,file="consensys/GMM.RDATA")
 #run parallelized EM algorithm for GMM
-cluster = Mclust(GMM[1:100000,],G=4)
+GMM=as.matrix(GMM)
+
+chunkSize = 100000
+
+rm(tx)
+rm(dat)
+rm(aggData)
+rm(aggData2)
+rm(addresses)
+gc()
+
+registerDoMC(cores=8)
+getDoParWorkers()
+
+list<-foreach(i=1:5) %dopar% {
+  print(i)
+  cluster = pmclust(GMM[(i-1)*chunkSize+1:(i*chunkSize),],K=4)
+}
+
+
+save(list,file="consensys/list.RDATA")
 uncertainty = cluster$uncertainty
 probs = cluster$z
 c = cluster$classification
 bestProbs = rep(0,nrow(probs))
 
-for (i in 1:nrow(probs)){
-  bestProbs[i]=probs[i,c[i]]
-}
-
-mean(bestProbs)
 badTransactionInd = which(dat$from%in%addresses[badFlag[,1]]|dat$to%in%addresses[badFlag[,1]])
 badTransactions = GMM[badTransactionInd,]
+
+results = data.table(matrix(0,0,9))
+setnames(results,c("bad","fold","gas","gas.price","gas.used.tx","value","gas.used.block","from.degree","to.degree"))
+for (j in 1:5){
+  classes = list[[j]]$class
+  distr = table(classes)
+  thisInd = (j-1)*chunkSize+1:(j*chunkSize)
+  thisBadInd = intersect(thisInd,badTransactionInd)
+  distrBad = table(classes[thisBadInd])
+  badRow = c("bad",j,distrBad)
+  goodRow= c("good",j,distr)
+  results = rbind(results,badRow)
+  results = rbind(results,goodRow)
+}
+
+boxplot()
+mean(bestProbs)
+
 mean(bestProbs[badTransactionInd],na.rm = T)
 means = cluster$parameters$mean
 means=cbind(c("gas","gas.price","gas.used.tx","value","gas.used.block","from.degree","to.degree"),means)
@@ -150,3 +186,4 @@ means = data.table(means)
 setnames(means,c("feature","C1","C2","C3"))
 means$feature = as.factor(means$feature)
 xyplot(C1+C2+C3~feature,means)
+
