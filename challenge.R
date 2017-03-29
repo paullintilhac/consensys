@@ -7,6 +7,8 @@ library(expm)
 library(mclust)
 library(rARPACK)
 library(spam)
+library(mclust)
+library(pmclust)
 tx = data.table(read.csv("consensys/txs_sample.csv",header = T,as.is = T,
                          colClasses = c("integer","numeric","numeric","numeric",
                                         "numeric","character","character","integer","character")))
@@ -22,7 +24,7 @@ blocks = blocks[!duplicated(blocks),]
 dat =merge(tx,blocks,by = "block.number",suffixes=c(".tx",".block"))
 dat$bad = ifelse(tx$to%in%badAddresses,1,0)
 badTX = dat[bad==1,]
-## 
+##
 
 
 # mean(tx$gas) #125032.6
@@ -102,12 +104,48 @@ badInd = match(badAddresses,  addresses)
 
 startVec[badInd,]=1
 
-## third order Taylor expansion of matrix exponential exp(-kL)
-
+## second order Taylor expansion of matrix exponential exp(-kL)
 nextVec =identity%*%startVec -k*L%*%startVec+.5*(k^2)*L%*%(L%*%startVec)
-nextVec = startVec-k*L%*%startVec
 
 badFlag = nextVec>=.001
 
-ev <- eigs(laplacian,4)
+ev <- eigs(L,4)
 
+
+
+#add "from" and "to" degree to transaction dataset
+degFrame = data.table(cbind(addresses,degree))
+degFrame$degree = as.numeric(degFrame$degree)
+setnames(degFrame,c("from","from.degree"))
+dat = merge(dat,degFrame,by = "from")
+setnames(degFrame,c("to","to.degree"))
+dat = merge(dat,degFrame,by = "to")
+#take only numeric features
+GMM = dat[,c("gas","gas.price","gas.used.tx","value","gas.used.block","from.degree","to.degree")]
+GMM$gas = log(GMM$gas)
+GMM$gas[GMM$gas==-Inf]=0
+GMM$gas.price = log(GMM$gas.price)
+GMM$gas.price[GMM$gas.price==-Inf]=-10
+GMM$gas.used.tx=log(GMM$gas.used.tx)
+GMM$gas.used.block=log(GMM$gas.used.block )
+#run parallelized EM algorithm for GMM
+cluster = Mclust(GMM[1:100000,],G=4)
+uncertainty = cluster$uncertainty
+probs = cluster$z
+c = cluster$classification
+bestProbs = rep(0,nrow(probs))
+
+for (i in 1:nrow(probs)){
+  bestProbs[i]=probs[i,c[i]]
+}
+
+mean(bestProbs)
+badTransactionInd = which(dat$from%in%addresses[badFlag[,1]]|dat$to%in%addresses[badFlag[,1]])
+badTransactions = GMM[badTransactionInd,]
+mean(bestProbs[badTransactionInd],na.rm = T)
+means = cluster$parameters$mean
+means=cbind(c("gas","gas.price","gas.used.tx","value","gas.used.block","from.degree","to.degree"),means)
+means = data.table(means)
+setnames(means,c("feature","C1","C2","C3"))
+means$feature = as.factor(means$feature)
+xyplot(C1+C2+C3~feature,means)
