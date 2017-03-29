@@ -5,11 +5,15 @@ library(reshape2)
 library(EMCluster)
 library(expm)
 library(mclust)
-tx = data.table(read.csv("c:/users/paul/consensys/txs_sample.csv",header = T,as.is = T,
+library(rARPACK)
+library(spam)
+library(mclust)
+library(pmclust)
+tx = data.table(read.csv("consensys/txs_sample.csv",header = T,as.is = T,
                          colClasses = c("integer","numeric","numeric","numeric",
                                         "numeric","character","character","integer","character")))
 
-blocks = data.table(read.csv("c:/users/paul/Downloads/blocks_sample.csv",header = T,as.is = T,
+blocks = data.table(read.csv("consensys/blocks_sample.csv",header = T,as.is = T,
                              colClasses = c("numeric","numeric","integer","character",
                                             "character","character","integer")))
 badAddresses=c("0x6a0a0fc761c612c340a0e98d33b37a75e5268472",
@@ -20,7 +24,7 @@ blocks = blocks[!duplicated(blocks),]
 dat =merge(tx,blocks,by = "block.number",suffixes=c(".tx",".block"))
 dat$bad = ifelse(tx$to%in%badAddresses,1,0)
 badTX = dat[bad==1,]
-## 
+##
 
 
 # mean(tx$gas) #125032.6
@@ -54,25 +58,28 @@ sum(aggData$right%in%aggData$left) #=~6000
 aggData$hasTwin = ifelse(aggData$left%in%aggData$right,1,0)
 aggData2=aggData[,list("N"=sum(N),"value"=sum(value),"flag"=max(flag),"hasTwin"=max(hasTwin)),by = c("address1","address2")]
 
-twinData = aggData[hasTwin ==1,]
+
+indI=match(aggData2$address1,addresses)
+indJ=match(aggData2$address2,addresses)
+comb1 = c(indI,indJ)
+comb2= c(indJ,indI)
+comb = data.table(cbind(comb1,comb2))
+newInd = which(!duplicated(comb))
+comb = comb[newInd,]
+twinData = aggData2[hasTwin ==1,]
 twinAddresses = unique(union(twinData$from,twinData$to))
 
-setnames(aggData2,c("from","to","N","value","flag"))
-symMat=rbind(aggData,aggData2)
-combMat = symMat[,list("N"=sum(N),"value"=sum(value))]
-#aggData=aggData[to%in%addressesTo,]
-aggData=tx[from%in%addressesTo,list("N"=.N,"value"=sum(value),"flag"=ifelse(.N>0,1,0)),by = c("to","from")]
+comb=comb[comb1<=comb2,]
 
-sm =sparseMatrix(i=c(match(aggData$from,addresses),seq(length(unique(aggData$to))+1,length(addresses))),
-                 j=c(match(aggData$to,addresses),seq(length(unique(aggData$to))+1,length(addresses))),
-                 x=c(aggData$flag,rep(0,length(addresses)-length(unique(aggData$to)))),
+sm =sparseMatrix(i=comb$comb1,
+                 j=comb$comb2,
+                 x=rep(1,nrow(comb)),
                  symmetric = T)
 
-tm =sparseMatrix(i=c(match(twinData$from,addresses),seq(length(unique(twinData$to))+1,length(addresses))),
-                 j=c(match(twinData$to,addresses),seq(length(unique(twinData$to))+1,length(addresses))),
-                 x=c(twinData$flag,rep(0,length(addresses)-length(unique(twinData$to)))),
-                 giveCsparse = T)
-
+tm =sparseMatrix(i=match(twinData$address1,addresses),
+                 j=match(twinData$address2,addresses),
+                 x=twinData$flag,
+                 giveCsparse =T)
 degTwins = colSums(tm)
 mean(degTwins[degTwins!=0])
 ex=which(aggData$from == "0x9ad57c8a76ac8528dc6ecdda801865a317e36758"
@@ -81,28 +88,64 @@ ex=which(aggData$from == "0x9ad57c8a76ac8528dc6ecdda801865a317e36758"
 degree = colSums(sm)
 mean(degree[degree!=0])
 
-degree  = c(degree,rep(0,length(addresses)-length(degree)))
+
 degreeMat =sparseMatrix(j=seq(1,length(addresses)),
                         i=seq(1,length(addresses)),
                         x=degree,
                         giveCsparse = T)
-laplacian = degreeMat - sm
-laplacian = forceSymmetric(laplacian)
+
+L = degreeMat-sm
+
 k=.01
-##Second Order Taylor approximation of the matrix exponential
 identity = sparseMatrix(i=seq(1,length(addresses)),j=seq(1,length(addresses)),x = rep(1,length(addresses)))
-expL =identity -k*laplacian+.5*(k^2)*laplacian%*%laplacian
-badInd = match(badAddresses,  addresses)
 
 startVec = as.matrix(rep(0,length(addresses)))
+badInd = match(badAddresses,  addresses)
+
 startVec[badInd,]=1
-nextVec =as.matrix(expL%*%startVec)
 
-nextVec[maybeBadInd]
+## second order Taylor expansion of matrix exponential exp(-kL)
+nextVec =identity%*%startVec -k*L%*%startVec+.5*(k^2)*L%*%(L%*%startVec)
 
-#e=eigs(laplacian,3)
+badFlag = nextVec>=.001
 
-#write.csv(addresses,"~/consensys/uniqueAddresses.csv")
-listVec = rep(list(),length(addresses))
+ev <- eigs(L,4)
 
-weightVec = rep(0,length(addresses))
+
+
+#add "from" and "to" degree to transaction dataset
+degFrame = data.table(cbind(addresses,degree))
+degFrame$degree = as.numeric(degFrame$degree)
+setnames(degFrame,c("from","from.degree"))
+dat = merge(dat,degFrame,by = "from")
+setnames(degFrame,c("to","to.degree"))
+dat = merge(dat,degFrame,by = "to")
+#take only numeric features
+GMM = dat[,c("gas","gas.price","gas.used.tx","value","gas.used.block","from.degree","to.degree")]
+GMM$gas = log(GMM$gas)
+GMM$gas[GMM$gas==-Inf]=0
+GMM$gas.price = log(GMM$gas.price)
+GMM$gas.price[GMM$gas.price==-Inf]=-10
+GMM$gas.used.tx=log(GMM$gas.used.tx)
+GMM$gas.used.block=log(GMM$gas.used.block )
+#run parallelized EM algorithm for GMM
+cluster = Mclust(GMM[1:100000,],G=4)
+uncertainty = cluster$uncertainty
+probs = cluster$z
+c = cluster$classification
+bestProbs = rep(0,nrow(probs))
+
+for (i in 1:nrow(probs)){
+  bestProbs[i]=probs[i,c[i]]
+}
+
+mean(bestProbs)
+badTransactionInd = which(dat$from%in%addresses[badFlag[,1]]|dat$to%in%addresses[badFlag[,1]])
+badTransactions = GMM[badTransactionInd,]
+mean(bestProbs[badTransactionInd],na.rm = T)
+means = cluster$parameters$mean
+means=cbind(c("gas","gas.price","gas.used.tx","value","gas.used.block","from.degree","to.degree"),means)
+means = data.table(means)
+setnames(means,c("feature","C1","C2","C3"))
+means$feature = as.factor(means$feature)
+xyplot(C1+C2+C3~feature,means)
