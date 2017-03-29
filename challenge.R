@@ -131,9 +131,9 @@ GMM$gas.price = log(GMM$gas.price)
 GMM$gas.price[GMM$gas.price==-Inf]=-10
 GMM$gas.used.tx=log(GMM$gas.used.tx)
 GMM$gas.used.block=log(GMM$gas.used.block )
+GMM=as.matrix(GMM)
 save(GMM,file="consensys/GMM.RDATA")
 #run parallelized EM algorithm for GMM
-GMM=as.matrix(GMM)
 
 chunkSize = 100000
 
@@ -152,6 +152,7 @@ list<-foreach(i=1:5) %dopar% {
   cluster = pmclust(GMM[(i-1)*chunkSize+1:(i*chunkSize),],K=4)
 }
 
+load("c:/users/paul/downloads/list.RDATA")
 
 save(list,file="consensys/list.RDATA")
 uncertainty = cluster$uncertainty
@@ -162,16 +163,21 @@ bestProbs = rep(0,nrow(probs))
 badTransactionInd = which(dat$from%in%addresses[badFlag[,1]]|dat$to%in%addresses[badFlag[,1]])
 badTransactions = GMM[badTransactionInd,]
 
-results = data.table(matrix(0,0,9))
-setnames(results,c("bad","fold","gas","gas.price","gas.used.tx","value","gas.used.block","from.degree","to.degree"))
+
+
+results = data.table(matrix(0,0,6))
+setnames(results,c("bad","fold",seq(1,4)))
 for (j in 1:5){
-  classes = list[[j]]$class
+  classes = as.factor(list[[j]]$class)
   distr = table(classes)
   thisInd = (j-1)*chunkSize+1:(j*chunkSize)
   thisBadInd = intersect(thisInd,badTransactionInd)
   distrBad = table(classes[thisBadInd])
-  badRow = c("bad",j,distrBad)
-  goodRow= c("good",j,distr)
+  badRow = as.matrix(t(c("bad",j,distrBad)))
+  goodRow= as.matrix(t(c("good",j,distr)))
+  colnames(badRow)=c("bad","fold",seq(1:4))
+  colnames(goodRow)=c("bad","fold",seq(1:4))
+  
   results = rbind(results,badRow)
   results = rbind(results,goodRow)
 }
