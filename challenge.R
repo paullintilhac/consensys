@@ -8,15 +8,14 @@ library(expm)
 library(mclust)
 library(rARPACK)
 library(spam)
-library(mclust)
 library(pmclust)
 library(foreach)
-library(doMC)
+library(doParallel)
 tx = data.table(read.csv("consensys/txs_sample.csv",header = T,as.is = T,
                          colClasses = c("integer","numeric","numeric","numeric",
                                         "numeric","character","character","integer","character")))
 
-blocks = data.table(read.csv("consensys/blocks_sample.csv",header = T,as.is = T,
+blocks = data.table(read.csv("c:/users/paul/consensys/blocks_sample.csv",header = T,as.is = T,
                              colClasses = c("numeric","numeric","integer","character",
                                             "character","character","integer")))
 badAddresses=c("0x6a0a0fc761c612c340a0e98d33b37a75e5268472",
@@ -128,15 +127,17 @@ GMM = dat[,c("gas","gas.price","gas.used.tx","value","gas.used.block","from.degr
 GMM$gas = log(GMM$gas)
 GMM$gas[GMM$gas==-Inf]=0
 GMM$gas.price = log(GMM$gas.price)
-GMM$gas.price[GMM$gas.price==-Inf]=-10
+GMM$gas.price[GMM$gas.price==-Inf]=-1 #want to differentiate from gas.price = 1, which has log 0
 GMM$gas.used.tx=log(GMM$gas.used.tx)
 GMM$gas.used.block=log(GMM$gas.used.block )
+GMM$value = log(GMM$value)
+save(GMM,file="c:/users/paul/consensys/GMM.RDATA")
+GMM$value[GMM$value==-Inf]=-40
 GMM=as.matrix(GMM)
-save(GMM,file="consensys/GMM.RDATA")
 #run parallelized EM algorithm for GMM
 
-chunkSize = 100000
-
+chunkSize = 10000
+# 
 rm(tx)
 rm(dat)
 rm(aggData)
@@ -144,44 +145,76 @@ rm(aggData2)
 rm(addresses)
 gc()
 
-registerDoMC(cores=8)
+registerDoParallel(cores=4)
 getDoParWorkers()
-
-list<-foreach(i=1:5) %dopar% {
+start = Sys.time()
+list<-foreach(i=1:4,.packages="mclust") %dopar% {
   print(i)
-  cluster = pmclust(GMM[(i-1)*chunkSize+1:(i*chunkSize),],K=4)
+  cluster = Mclust(GMM[((i-1)*chunkSize+1):(i*chunkSize),],G=4)
 }
+end = Sys.time()
+print(end-start)
+load("c:/users/paul/downloads/listBig.RDATA")
 
-load("c:/users/paul/downloads/list.RDATA")
-
-save(list,file="consensys/list.RDATA")
-uncertainty = cluster$uncertainty
-probs = cluster$z
-c = cluster$classification
-bestProbs = rep(0,nrow(probs))
+save(list,file="consensys/clusterSmall.RDATA")
 
 badTransactionInd = which(dat$from%in%addresses[badFlag[,1]]|dat$to%in%addresses[badFlag[,1]])
 badTransactions = GMM[badTransactionInd,]
 
 
-
-results = data.table(matrix(0,0,6))
-setnames(results,c("bad","fold",seq(1,4)))
-for (j in 1:5){
-  classes = as.factor(list[[j]]$class)
-  distr = table(classes)
-  thisInd = (j-1)*chunkSize+1:(j*chunkSize)
+mean(bestProbs)
+mean(bestProbs[badTransactionInd],na.rm=T)
+mean(uncertainty)
+mean(uncertainty[badTransactionInd],na.rm=T)
+results = data.table(matrix(0,0,8))
+setnames(results,c("bad","fold",paste0("C",seq(1,4)),"prob","uncertainty"))
+results$fold =as.integer(results$fold)
+results$bad = as.character(results$bad)
+results$prob=as.numeric(results$prob)
+results$uncertainty = as.numeric(results$uncertainty)
+for (j in 1:4){
+  classes = as.factor(list[[j]]$classification)
+  #classes = as.factor(list[[j]]$class)
+  distr = round(table(classes)/sum(table(classes)),3)
+  thisInd = ((j-1)*chunkSize+1):(j*chunkSize)
   thisBadInd = intersect(thisInd,badTransactionInd)
-  distrBad = table(classes[thisBadInd])
-  badRow = as.matrix(t(c("bad",j,distrBad)))
-  goodRow= as.matrix(t(c("good",j,distr)))
-  colnames(badRow)=c("bad","fold",seq(1:4))
-  colnames(goodRow)=c("bad","fold",seq(1:4))
+  distrBad = round(table(classes[thisBadInd])/sum(table(classes[thisBadInd])),3)
+  badRow = data.table(as.matrix(t(as.numeric(distrBad))))
+  colnames(badRow)=paste0("C",seq(1,4))
+  goodRow= data.table(as.matrix(t(as.numeric(distr))))
+  colnames(goodRow)=paste0("C",seq(1,4))
+  bad = "good"
+  fold = j
+  goodRow = cbind(fold,goodRow)
+  goodRow = cbind(bad,goodRow)
+  bad = "bad"
+  badRow = cbind(fold,badRow)
+  badRow = cbind(bad,badRow)
+  uncertaintyVec = list[[j]]$uncertainty
+  probs = list[[j]]$z
+  bestProbs = rep(0,nrow(probs))
+  for (i in 1:nrow(probs)){
+    bestProbs[i]=probs[i,classes[i]]
+  }
   
+  prob = mean(bestProbs)
+  goodRow = cbind(goodRow,prob)
+  prob = mean(bestProbs[thisBadInd-(j-1)*chunkSize])
+  badRow = cbind(badRow,prob)
+  
+  
+  uncertainty = mean(uncertaintyVec)
+  goodRow = cbind(goodRow,uncertainty)
+  
+  uncertainty = mean(uncertaintyVec[thisBadInd-(j-1)*chunkSize])
+  badRow = cbind(badRow,uncertainty)
+
   results = rbind(results,badRow)
   results = rbind(results,goodRow)
 }
 
+meltedResults = melt(results,id.vars = c("bad","fold"),variable.name = "cluster")
+bwplot(value~cluster,meltedResults[bad=="bad"])
 boxplot()
 mean(bestProbs)
 
