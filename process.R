@@ -24,7 +24,7 @@ getRecursiveLabels = function(tax, label){
   return(unique(result))
 }
 
-for (i in 1:nrow(tax)){
+for (i in 1:15){
   catName = tax[i,1]
   thisRow  = getRecursiveLabels(tax,catName)
   labelList = NULL
