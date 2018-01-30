@@ -24,7 +24,7 @@ getRecursiveLabels = function(tax, label){
   return(unique(result))
 }
 
-for (i in 1:15){
+for (i in 1:nrow(tax)){
   catName = tax[i,1]
   thisRow  = getRecursiveLabels(tax,catName)
   labelList = NULL
@@ -64,4 +64,4 @@ ml = cbind(dat$address,ml)
 names(ml)[1]="address"
 names(ml)[2:ncol(ml)]=colnames(fullTable)
 write.csv(fullTable, "~/consensys/expanded_labels.csv")
-write.csv(ml,"~/consensys/formatted_address_classes.csv")
+write.csv(ml,"~/consensys/formatted_address_classes.csv",row.names = F)
