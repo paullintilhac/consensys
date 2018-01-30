@@ -1,0 +1,17 @@
+library(plyr)
+dat = read.csv("~/Downloads/walked-data.csv")
+oldDat = read.csv("~/consensys/labels.csv")
+ncol1 = ncol(dat)
+ncol2 =ncol(oldDat)
+dat = read.csv("~/Downloads/walked-data.csv",colClasses = rep("character",ncol1))
+oldDat = read.csv("~/consensys/labels.csv",colClasses = rep("character",ncol2))
+dat$address= as.character(dat$address)
+
+newInd = which(!dat$address%in%oldDat$address)
+length(newInd)
+dim(dat)
+dat = dat[newInd,]
+#dat = rbind.fill(oldDat, dat)
+names(dat)
+names(oldDat)
+write.csv(dat, "~/consensys/new labels.csv",row.names = F)

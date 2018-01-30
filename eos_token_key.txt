@@ -1,0 +1,3 @@
+Description	EOS Token Sale Claim Key
+Public key	EOS6ZbgvatLfPAXqUxCGVhxJHAwdyZ3xqbhKMrdqGPwTqxExufpxn
+Private key	5HwWnTqUbsKEHHc8KnybFjNQy7fcTeXNVA2pqsxVjaN8iKgZCJD
